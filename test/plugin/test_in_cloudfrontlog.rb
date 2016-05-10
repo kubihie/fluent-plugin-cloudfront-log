@@ -15,7 +15,9 @@ class Cloudfront_LogInputTest < Test::Unit::TestCase
     :moved_log_prefix  => 'a/b/c_moved',
     :region            => 'ap-northeast-1',
     :tag               => 'cloudfront',
-    :interval          => '500'
+    :interval          => '500',
+    :delimiter         => nil,
+    :verbose           => true,
   }
 
   def parse_config(conf = {})
@@ -42,6 +44,13 @@ class Cloudfront_LogInputTest < Test::Unit::TestCase
       driver = create_driver(conf)
     }
     assert_equal("'region' parameter is required", exception.message)
+
+    exception = assert_raise(Fluent::ConfigError) {
+      conf = DEFAULT_CONFIG.clone
+      conf.delete(:log_prefix)
+      driver = create_driver(conf)
+    }
+    assert_equal("'log_prefix' parameter is required", exception.message)
 
     conf = DEFAULT_CONFIG.clone
     conf.delete(:moved_log_bucket)

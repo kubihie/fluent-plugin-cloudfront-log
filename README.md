@@ -1,8 +1,56 @@
 # Fluent::Plugin::Cloudfront::Log
+This plugin will connect to the S3 bucket that you store your cloudfront logs in. Once the plugin processes them and ships them to FluentD, it moves them to another location(either another bucket or sub directory).
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/fluent/plugin/cloudfront/log`. To experiment with that code, run `bin/console` for an interactive prompt.
+## Example config
+```
+<source>
+@type       cloudfront_log
+log_bucket  cloudfront-logs
+log_prefix  production
+region      us-east-1
+interval    300
+aws_key_id  xxxxxx
+aws_sec_key xxxxxx
+tag         reverb.cloudfront
+verbose     true
+</source>
+```
 
-TODO: Delete this and the text above, and describe your gem
+## Configuration options
+
+#### log_bucket
+This option tells the plugin where to look for the cloudfront logs
+
+#### log_prefix
+For example if your logs are stored in a folder called "production" under the "cloudfront-logs" bucket, your logs would be stored in cloudfront like "cloudfront-logs/production/log.gz".
+In this case, you'd want to use the prefix "production".
+
+#### moved_log_bucket
+Here you can specify where you'd like the log files to be moved after processing. If left blank this defaults to a folder called `_moved` under the bucket configured for `@log_bucket`.
+
+#### moved_log_prefix
+This specifices what the log files will be named once they're processed. This defaults to `_moved`.
+
+#### region
+The region where your cloudfront logs are stored.
+
+#### interval
+This is the rate in seconds at which we check the bucket for updated logs. It's recommended not to put this lower than 300(The default), cloudfront delivers logs every 20~ minutes to s3, so shortening this interval won't deliver your logs faster.
+
+#### aws_sec_id
+The ID of your AWS keypair. Note: Since this plugin uses aws-sdk under the hood you can leave these two aws fields blank if you have an IAM role applied to your FluentD instance.
+
+#### aws_sec_key
+The secret key portion of your AWS keypair
+
+#### tag
+This is a FluentD builtin.
+
+#### delimiter
+You shouldn't have to specify delimiter at all but this option is provided and passed to the S3 client in the event that you have a weird delimiter in your log file names. Defaults to `nil`.
+
+#### verbose
+Turn this on if you'd like to see verbose information about the plugin and how it's processing your files.
 
 ## Installation
 
@@ -14,15 +62,11 @@ gem 'fluent-plugin-cloudfront-log'
 
 And then execute:
 
-    $ bundle
+$ bundle
 
 Or install it yourself as:
 
-    $ gem install fluent-plugin-cloudfront-log
-
-## Usage
-
-TODO: Write usage instructions here
+$ gem install fluent-plugin-cloudfront-log
 
 ## Development
 
