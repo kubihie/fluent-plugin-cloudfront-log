@@ -4,12 +4,14 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
   config_param :aws_key_id,        :string,  :default => nil, :secret => true
   config_param :aws_sec_key,       :string,  :default => nil, :secret => true
   config_param :log_bucket,        :string
-  config_param :log_prefix,        :string,  :default => nil
+  config_param :log_prefix,        :string
   config_param :moved_log_bucket,  :string,  :default => @log_bucket
   config_param :moved_log_prefix,  :string,  :default => '_moved'
   config_param :region,            :string
   config_param :tag,               :string,  :default => 'cloudfront.access'
-  config_param :interval,          :integer,    :default => 300
+  config_param :interval,          :integer, :default => 300
+  config_param :delimiter,         :string,  :default => nil
+  config_param :verbose,           :string,  :default => false
 
   def initialize
     super
@@ -25,24 +27,25 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
 
     raise Fluent::ConfigError.new unless @log_bucket
     raise Fluent::ConfigError.new unless @region
+    raise Fluent::ConfigError.new unless @log_prefix
 
     @moved_log_bucket = @log_bucket unless @moved_log_bucket
     @moved_log_prefix = @log_prefix + '_moved' unless @moved_log_prefix
-    
-    log.info('@log_bucket:' + @log_bucket)
-    log.info('@moved_log_bucket:' + @moved_log_bucket)
-    log.info('@log_prefix:' + @log_prefix)
-    log.info('@moved_log_prefix:' + @moved_log_prefix)
+
+    if @verbose
+      log.info("@log_bucket: #{@log_bucket}")
+      log.info("@moved_log_bucket: #{@moved_log_bucket}")
+      log.info("@log_prefix: #{@log_prefix}")
+      log.info("@moved_log_prefix: #{@moved_log_prefix}")
+    end
   end
 
   def start
     super
+    log.info("Cloudfront verbose logging enabled") if @verbose
     client
 
     @loop = Coolio::Loop.new
-    #timer = TimerWatcher.new(@interval, true, log) do
-    #  input
-    #end
     timer = TimerWatcher.new(@interval, true, log, &method(:input)) 
 
     @loop.attach(timer)
@@ -81,17 +84,27 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
   end
 
   def purge(filename)
-    log.info('copy_src:' + @log_bucket + '/' + @log_prefix + filename)
-    log.info('copy_dst:' + @moved_log_bucket + '/' + @moved_log_prefix + '/' + filename)
-    client.copy_object(:bucket => @moved_log_bucket, :copy_source => @log_bucket + '/' + @log_prefix + filename, :key => @moved_log_prefix + '/' + filename)
-    client.delete_object(:bucket => @log_bucket, :key => @log_prefix + filename)
+    # Key is the name of the object without the bucket prefix, e.g: asdf/asdf.jpg
+    source_object_key       = [@log_prefix, filename].join('/')
+
+    # Full path includes bucket name in addition to object key, e.g: bucket/asdf/asdf.jpg
+    source_object_full_path = [@log_bucket, source_object_key].join('/')
+
+    dest_object_key         = [@moved_log_prefix, filename].join('/')
+    dest_object_full_path   = [@moved_log_bucket, dest_object_key].join('/')
+
+    log.info("Copying object: #{source_object_full_path} to #{dest_object_full_path}") if @verbose
+    client.copy_object(:bucket => @moved_log_bucket, :copy_source => source_object_full_path, :key => dest_object_key)
+
+    log.info("Deleting object: #{source_object_key} from #{@log_bucket}") if @verbose
+    client.delete_object(:bucket => @log_bucket, :key => source_object_key)
   end
 
   def input
-    client.list_objects(:bucket => @log_bucket, :prefix => @log_prefix , :delimiter => '/').each do |list|
+    client.list_objects(:bucket => @log_bucket, :prefix => @log_prefix , :delimiter => @delimiter).each do |list|
       list.contents.each do |content|
-        filename = content.key.sub(/#{@log_prefix}/, '')
-        #log.info('filename:' + filename)
+        filename = content.key.sub(/^#{@log_prefix}\//, "")
+        log.info("Currently processing: #{filename}") if @verbose
         next if filename[-1] == '/'  #skip directory/
         next unless filename[-2, 2] == 'gz'  #skip without gz file
 
