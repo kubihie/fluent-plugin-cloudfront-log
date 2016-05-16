@@ -76,5 +76,5 @@ To install this gem onto your local machine, run `bundle exec rake install`. To 
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/fluent-plugin-cloudfront-log.
+Bug reports and pull requests are welcome on GitHub at https://github.com/kubihie/fluent-plugin-cloudfront-log.
 
