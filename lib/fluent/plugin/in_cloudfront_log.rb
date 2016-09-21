@@ -12,6 +12,7 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
   config_param :interval,          :integer, :default => 300
   config_param :delimiter,         :string,  :default => nil
   config_param :verbose,           :string,  :default => false
+  config_param :thread_num,        :integer, :default => 4
 
   def initialize
     super
@@ -37,6 +38,7 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
       log.info("@moved_log_bucket: #{@moved_log_bucket}")
       log.info("@log_prefix: #{@log_prefix}")
       log.info("@moved_log_prefix: #{@moved_log_prefix}")
+      log.info("@thread_num: #{@thread_num}")
     end
   end
 
@@ -46,7 +48,7 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
     client
 
     @loop = Coolio::Loop.new
-    timer = TimerWatcher.new(@interval, true, log, &method(:input)) 
+    timer = TimerWatcher.new(@interval, true, log, &method(:input))
 
     @loop.attach(timer)
     @thread = Thread.new(&method(:run))
@@ -80,7 +82,7 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
       @version = line.sub(/^#Version:/i, '').strip
     when /^#Fields:.+/i then
       @fields = line.sub(/^#Fields:/i, '').strip.split("\s")
-    end  
+    end
   end
 
   def purge(filename)
@@ -94,37 +96,76 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
     dest_object_full_path   = [@moved_log_bucket, dest_object_key].join('/')
 
     log.info("Copying object: #{source_object_full_path} to #{dest_object_full_path}") if @verbose
-    client.copy_object(:bucket => @moved_log_bucket, :copy_source => source_object_full_path, :key => dest_object_key)
+
+    begin
+      client.copy_object(:bucket => @moved_log_bucket, :copy_source => source_object_full_path, :key => dest_object_key)
+    rescue => e
+      log.warn("S3 Copy client error. #{e.message}")
+      return
+    end
+
 
     log.info("Deleting object: #{source_object_key} from #{@log_bucket}") if @verbose
-    client.delete_object(:bucket => @log_bucket, :key => source_object_key)
+    begin
+      client.delete_object(:bucket => @log_bucket, :key => source_object_key)
+    rescue => e
+      log.warn("S3 Delete client error. #{e.message}")
+      return
+    end
+  end
+
+
+  def process_content(content)
+    filename = content.key.sub(/^#{@log_prefix}\//, "")
+    log.info("CloudFront Currently processing: #{filename}") if @verbose
+    return if filename[-1] == '/'  #skip directory/
+    return unless filename[-2, 2] == 'gz'  #skip without gz file
+
+    begin
+      access_log_gz = client.get_object(:bucket => @log_bucket, :key => content.key).body
+      access_log = Zlib::GzipReader.new(access_log_gz).read
+    rescue => e
+      log.warn("S3 GET client error. #{e.message}")
+      return
+    end
+
+    access_log.split("\n").each do |line|
+      if line[0.1] == '#'
+        parse_header(line)
+        next
+      end
+      line = URI.unescape(line)  #hoge%2520fuga -> hoge%20fuga
+      line = URI.unescape(line)  #hoge%20fuga   -> hoge fuga
+      line = line.split("\t")
+      record = Hash[@fields.collect.zip(line)]
+      timestamp = Time.parse("#{record['date']}T#{record['time']}+00:00").to_i
+      router.emit(@tag, timestamp, record)
+    end
+    purge(filename)
   end
 
   def input
+    log.info("CloudFront Begining input going to list S3")
     client.list_objects(:bucket => @log_bucket, :prefix => @log_prefix , :delimiter => @delimiter).each do |list|
+    queue = Queue.new
+    threads = []
       list.contents.each do |content|
-        filename = content.key.sub(/^#{@log_prefix}\//, "")
-        log.info("Currently processing: #{filename}") if @verbose
-        next if filename[-1] == '/'  #skip directory/
-        next unless filename[-2, 2] == 'gz'  #skip without gz file
-
-        access_log_gz = client.get_object(:bucket => @log_bucket, :key => content.key).body
-        access_log = Zlib::GzipReader.new(access_log_gz).read
-
-        access_log.split("\n").each do |line|
-          if line[0.1] == '#'
-            parse_header(line)
-            next
-          end
-          line = URI.unescape(line)  #hoge%2520fuga -> hoge%20fuga
-          line = URI.unescape(line)  #hoge%20fuga   -> hoge fuga
-          line = line.split("\t")
-          record = Hash[@fields.collect.zip(line)]
-          timestamp = Time.parse("#{record['date']}T#{record['time']}+00:00").to_i
-          router.emit(@tag, timestamp, record)
-        end
-        purge(filename)
+        queue << content
       end
+        # BEGINS THREADS
+        @thread_num.times do
+          threads << Thread.new do
+            until queue.empty?
+              work_unit = queue.pop(true) rescue nil
+              if work_unit
+                 process_content(work_unit)
+              end
+            end
+          end
+        end
+        log.debug("CloudFront Waiting for Threads to finish...")
+        threads.each { |t| t.join }
+        log.debug("CloudFront Finished")
     end
   end
 

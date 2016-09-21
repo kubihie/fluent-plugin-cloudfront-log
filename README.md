@@ -35,8 +35,7 @@ This specifices what the log files will be named once they're processed. This de
 The region where your cloudfront logs are stored.
 
 #### interval
-This is the rate in seconds at which we check the bucket for updated logs. It's recommended not to put this lower than 300(The default), cloudfront delivers logs every 20~ minutes to s3, so shortening this interval won't deliver your logs faster.
-
+This is the rate in seconds at which we check the bucket for updated logs. This defaults to 300.
 #### aws_sec_id
 The ID of your AWS keypair. Note: Since this plugin uses aws-sdk under the hood you can leave these two aws fields blank if you have an IAM role applied to your FluentD instance.
 
@@ -45,6 +44,9 @@ The secret key portion of your AWS keypair
 
 #### tag
 This is a FluentD builtin.
+
+#### thread_num
+The number of threads to create to concurrently process the S3 objects. Defaults to 4.
 
 #### delimiter
 You shouldn't have to specify delimiter at all but this option is provided and passed to the S3 client in the event that you have a weird delimiter in your log file names. Defaults to `nil`.
