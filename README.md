@@ -48,6 +48,9 @@ This is a FluentD builtin.
 #### thread_num
 The number of threads to create to concurrently process the S3 objects. Defaults to 4.
 
+#### s3_get_max
+Control the size of the S3 fetched list on each iteration. Default to 200.
+
 #### delimiter
 You shouldn't have to specify delimiter at all but this option is provided and passed to the S3 client in the event that you have a weird delimiter in your log file names. Defaults to `nil`.
 
