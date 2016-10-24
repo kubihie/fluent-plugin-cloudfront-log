@@ -13,6 +13,7 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
   config_param :delimiter,         :string,  :default => nil
   config_param :verbose,           :string,  :default => false
   config_param :thread_num,        :integer, :default => 4
+  config_param :s3_get_max,        :integer, :default => 200
 
   def initialize
     super
@@ -146,27 +147,33 @@ class Fluent::Cloudfront_LogInput < Fluent::Input
 
   def input
     log.info("CloudFront Begining input going to list S3")
-    client.list_objects(:bucket => @log_bucket, :prefix => @log_prefix , :delimiter => @delimiter).each do |list|
+    begin
+      s3_list = client.list_objects(:bucket => @log_bucket, :prefix => @log_prefix , :delimiter => @delimiter, :max_keys => @s3_get_max)
+    rescue => e
+      log.warn("S3 GET list error. #{e.message}")
+      return
+    end
+    log.info("Finished S3 get list")
     queue = Queue.new
     threads = []
-      list.contents.each do |content|
-        queue << content
-      end
-        # BEGINS THREADS
-        @thread_num.times do
-          threads << Thread.new do
-            until queue.empty?
-              work_unit = queue.pop(true) rescue nil
-              if work_unit
-                 process_content(work_unit)
-              end
-            end
+    log.debug("S3 List size: #{s3_list.contents.length}")
+    s3_list.contents.each do |content|
+      queue << content
+    end
+    # BEGINS THREADS
+    @thread_num.times do
+      threads << Thread.new do
+        until queue.empty?
+          work_unit = queue.pop(true) rescue nil
+          if work_unit
+            process_content(work_unit)
           end
         end
-        log.debug("CloudFront Waiting for Threads to finish...")
-        threads.each { |t| t.join }
-        log.debug("CloudFront Finished")
-    end
+       end
+     end
+     log.debug("CloudFront Waiting for Threads to finish...")
+     threads.each { |t| t.join }
+     log.debug("CloudFront Finished")
   end
 
   class TimerWatcher < Coolio::TimerWatcher
